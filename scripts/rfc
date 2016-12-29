@@ -1,0 +1,531 @@
+#!/usr/bin/perl
+#############################################################################
+# v3.2.3  Needs perl5 and w3m/lynx; edit path above to the location of your perl
+#       install. Run as root the first time to setup the index
+#       or change $indexpath
+# This is a work in progress but i'm really happy with how easy it's
+# made my life.   Written by Derrick Daugherty  freix/sifr  #unixgods /
+# #solaris efnet.  bug fixes/suggestions mail me at rfc@dewn.com
+#############################################################################
+#              TO DO
+# add diff url for html (-l) and txt's for -m/d/o etc
+# add element to array for diff sites if they have leading 00's or not
+# obey $PAGER?
+# add extension for BCP/STD/FYI related rfc's only
+# Add ICMP types
+# clean up and optimize some
+#
+#############################################################################
+# Feel free to redistribute as long as you keep this header in tact.
+# http://www.dewn.com/rfc/
+# Please let me know if you find this useful, I'd love to hear about it!
+# rfc@blinky-lights.org or rfc@dewn.com
+#############################################################################
+use strict;
+if(! -d "/var/cache/rfc"){ mkdir("/var/cache/rfc") }
+# what to use for browsing. example: $viewer="/usr/local/bin/lynx";
+# null will use @VIEWER to search your path for possibilities
+# OR it will use the ENV var of RFCVIEWER
+my $viewer;
+# potential browsers, order of perference
+my @VIEWER=qw(w3m lynx);
+
+my ($servlength,$indexlength,$indexpath,$servpath);
+my ($grepper,$rfcvar,$rfcbaseurl,$index);
+my $homedir=glob("~/");
+
+# These make it avail for all users if you can't 
+# run it as root. (full path, not ~/ )
+$indexpath="/var/cache/rfc/rfc-index";
+$servpath="/etc/nmap-services";
+
+####################################
+## add as many urls as you please ##
+####################################
+my @URLS=qw(http://www.ietf.org/rfc/
+	    !http://www.faqs.org/rfcs/
+	    http://www.isi.edu/in-notes/
+	    http://www.cis.ohio-state.edu/htbin/rfc/
+	    /var/cache/rfc/rfcs/);   #MAKE SURE you have the trailing slashes
+	    # URLs beginning with an ! are treated as HTML and not text
+
+#######################
+## Setup working Env ##
+#######################
+
+my $RFCVIEWER=$ENV{'RFCVIEWER'};
+my $PATH=$ENV{'PATH'};
+my $PAGER=$ENV{'PAGER'};
+my @PATH = split /\:/, $PATH;
+my @PAGER = split /\:/, $PAGER;
+
+if (not -e "$homedir.rfcrc")
+   {`echo $URLS[0] > $homedir.rfcrc`;
+       print "* * Creating $homedir.rfcrc * *\n\n";
+       open (USERRC, "$homedir.rfcrc");
+       while (<USERRC>) { $rfcbaseurl = $_;}
+       close (USERRC);
+   }
+else {
+      open (USERRC, "$homedir.rfcrc");
+      chomp($rfcbaseurl=<USERRC>);
+      close (USERRC);
+     }
+
+my $grepstring = $ARGV[0];
+unless ($grepstring) {
+	help();
+}
+
+if ($ARGV[0] ne "-i" and not -e "$indexpath")
+   {print "\nNo rfc-index!!!  Run with the -i option to download it!\n"
+    . "     (as root if you didn't change \$indexpath)\n"
+        .       "usage: rfc -i    updates the $indexpath via \$viewer\n\n";exit}
+
+## Find browser
+if ($RFCVIEWER) {$viewer = $RFCVIEWER}
+elsif (! -x $viewer and not $viewer)
+  { $viewer = browser();
+    if (not $viewer)
+      { print "\n*** Couldn't find suitable browser!!! ***\n";
+        print "Please set the \$viewer variable or \$RFCVIEWER env variable\n\n";
+	$viewer = "**undefined**";
+      }
+  }
+
+################################
+# Run with the given arguemens #
+################################
+
+if ($ARGV[0] eq "-i") {
+    open (INDEXPATH,">>$indexpath") || die "$indexpath can not be opened for writting!!\n" .
+    "Please make sure the file stated above exists and you have\npermission to write to it!  "
+    ."It may be desirable to change the\n\$indexpath to a location you can write to.";
+    close (INDEXPATH);
+    $indexlength=numlines($indexpath);
+    print "Modem users one moment, it's about 1024k \(doesn't need to be updated often\)\n";
+    print "original lines \t= $indexlength\t$indexpath\n";
+    #system ("$viewer -dump http://www.faqs.org/rfc/rfc-index.txt > $indexpath");
+    #system ("$viewer -dump http://www.dewn.com/rfc/rfc-index.txt > $indexpath");
+    #system ("$viewer -dump http://ftp.isi.edu/in-notes/rfc-index.txt > $indexpath");
+    system ("$viewer -dump http://www.ietf.org/rfc/rfc-index.txt > $indexpath");
+    $indexlength=numlines($indexpath); print "new lines \t= $indexlength\t$indexpath\n";
+    exit }
+
+my ($grepmod,$caretmod);
+    if (int($ARGV[0]) and ($ARGV[0] =~ /^\d+$/) ) {
+       $grepmod = int($ARGV[0]);
+    } else {
+       $grepmod = int($ARGV[1]);
+    }
+    my $numdigits = length($grepmod);
+    while ($numdigits < 4) {
+       $grepmod = "0" . $grepmod;
+       $numdigits++;
+    }
+    $caretmod = "^$grepmod";
+
+
+if ($ARGV[0] =~ /^\d+$/) {
+mygrep ($ARGV[0]);
+}
+
+my $extension = 'txt';
+if ($rfcbaseurl =~ /^\!/)
+{
+    $rfcbaseurl =~ s/^\!//;
+    $extension = 'html';
+}
+
+if ($ARGV[0] eq "-d") {
+    if ( (defined $ARGV[1]) and ($ARGV[1] =~ /^\d+$/) ){
+     print "Making... $ARGV[2]rfc$grepmod.txt\n";
+     system ("$viewer -dump $rfcbaseurl"."rfc$grepmod.$extension > $ARGV[2]rfc$grepmod.txt");
+        my $dumplength=numlines("$ARGV[2]rfc$grepmod.txt"); print "lines = $dumplength .. ";
+     print "Done.\n";
+     exit;
+  } else { print "Must specify the RFC to dump!\n";
+    print "\trfc -d \#  \/path\/-optional; dumps plain text RFC. default is current dir\n";
+    exit } }
+
+if ($ARGV[0] eq "-o") {
+    if ( (defined $ARGV[1]) and ($ARGV[1] =~ /^\d+$/) ){
+     print "Dumping... rfc$grepmod.$extension\n as ASCII to STDOUT";
+     system ("$viewer -dump $rfcbaseurl"."rfc$grepmod.$extension");
+     print "Done.\n";
+     exit;
+  } else { print "Must specify the RFC to dump to STDOUT!\n";
+    print "\trfc -o \#  dumps plain text RFC to STDOUT.\n";
+    exit } }
+
+
+if ($ARGV[0] eq "-r") {
+  if (defined $ARGV[1]) {
+    print "here's perl grep's argv $ARGV[1]\n";
+	mygrepstrings($ARGV[1]);
+  } else { print "Must give a regular expression in quotes!\n";
+    print "\trfc -r    go wild with your own regexp on $indexpath\n";
+    exit } }
+
+
+if ($ARGV[0] eq "-k" or $ARGV[0] eq "-s") {
+  if (defined $ARGV[1]) {
+    mygrepstrings($ARGV[1]);
+  } else { print "Must specify a string to search for!\n";
+    print "\trfc $ARGV[0] search for specified string in $indexpath\n";
+    exit } }
+
+
+if ($ARGV[0] eq "-l") {
+  if (defined $ARGV[1] and ($ARGV[1] =~ /^\d+$/)) {
+    print "Found browser at $viewer\n";
+    print "URL to get:  ${rfcbaseurl}rfc$grepmod.$extension \n";
+    exec "$viewer $rfcbaseurl"."rfc$grepmod.$extension";
+ } else {print "Need to specify the RFC to display!\n";
+     print "\trfc -l \#  spawns $viewer to the specified RFC\n"; exit }}
+
+
+### email the rfc
+
+if ($ARGV[0] eq "-m") {
+    if (( $ARGV[1] =~ /^\d+$/) and defined $ARGV[2]) {
+     print "Retreiving rfc$grepmod.$extension...\n";
+     open(RFC,"$viewer -dump $rfcbaseurl"."rfc$grepmod.$extension |");
+     print "Mailing $ARGV[2]\n";
+     open(MAIL, "| sendmail -t ");
+     print MAIL "To: $ARGV[2]\n";
+
+     	if ($ARGV[3]) 
+	{ 
+	 my $i=3;
+	 my $subject;
+	 while ($i <= $#ARGV)
+	   { $subject = join " ", ($subject, $ARGV[$i]); $i++ }
+	print MAIL "Subject:$subject\n";
+	}
+     	else {print MAIL "Subject: RFCutil:- $rfcbaseurl"."rfc$grepmod.$extension\n"}
+
+     	#if ($ARGV[3]) { print MAIL "Subject: $ARGV[3]\n"}
+     	#else {print MAIL "Subject: RFCutil:- $rfcbaseurl"."rfc$grepmod.txt\n"}
+     print MAIL "This was generated and sent to you by the RFCutil\nhttp://www.dewn.com/rfc/\n";
+     print MAIL "\n\n\n$rfcbaseurl"."rfc$grepmod.$extension";
+     while (<RFC>) { print MAIL; }
+        close (MAIL);
+        close (RFC);
+     exit;
+  }else { print "Must specify the RFC and email addy!!\n";
+    print "\trfc -m \# user\@remote.net [opt subject]; emails the RFC to given address\n";
+    exit } }
+
+
+if ($ARGV[0] eq "-n") {
+	if ($ARGV[1] ne "-i" and not -e "$servpath")
+	   {print "\nNo $servpath!!! Run with the -n -i option to download it!\n"
+	    . "     (as root if you didn't change \$servpath)\n"
+		.       "usage: \`rfc -n -i\` updates the $servpath via $viewer\n\n";exit}
+    if (defined $ARGV[1]) {
+	if ($ARGV[1] eq "-i") {
+	    open (SERVPATH, ">>$servpath"); close (SERVPATH);
+	    my $servlength=numlines("$servpath");
+	    print "One moment, it's fairly small \(doesn't need to be updated often\)\n";
+	    print "original lines \t= $servlength\t$servpath\n";
+	    system ("$viewer -dump http://www.dewn.com/rfc/nmap-services > $servpath");
+	    my $servlength=numlines("$servpath"); print "new lines \t= $servlength\t$servpath\n";
+	    exit}
+     print "Looking up service...\n";
+     my $string = $ARGV[1];
+     chomp($string);
+  open (SERVINDEX, $servpath);
+     my $place;
+     foreach $place (<SERVINDEX>) {
+   	if ($place =~ /(.*$string.+)/i){ 
+   	print "$1\n";}
+   	}
+   close (SERVINDEX);
+        exit;
+  } else { print "Must specify the port number\/service that you're looking for!!\n";
+    print "\trfc -n \#\/daemon local search for non-stanard service/port nums\n\t(BO Netbus etc)\n";
+    exit } }
+
+
+if ($ARGV[0] eq "-u") {
+    if (defined $ARGV[1] and $ARGV[1]=~ /^\d+$/) {
+     my $url=($ARGV[1] - 1);
+     `echo $URLS[$url] > $homedir.rfcrc`;
+     print "BaseURL is $URLS[$url]\n";
+     exit;
+    } else { print "Must specify a \# of the webserver listed in -w !!\n";
+   print "\trfc -u \#  sets the base URL to the number listed with -w\n";
+   print "BaseURL is $rfcbaseurl\n";
+exit}}
+
+
+if ($ARGV[0] eq "-w") {
+   print "Use -u # to set the URL\n";
+   my $list;
+   my $placement = 1;
+   foreach $list (@URLS){
+   print "$placement) $list\n";
+   $placement++;
+   }
+   print "BaseURL is $rfcbaseurl\n";
+   exit  }
+
+if ($ARGV[0] eq "-p") {
+   rfc1700($ARGV[1],$ARGV[2],$ARGV[3]);
+   print "\n";
+   exit  }
+
+
+if ($ARGV[0] eq "-h") {
+ help();
+}
+
+
+
+sub mygrep
+{
+
+    if (int($_[0]) and ($_[0] =~ /^\d+$/) ) {
+       $grepmod = int($_[0]);
+    } else {
+       $grepmod = int($_[1]);
+    }
+    my $numdigits = length($grepmod);
+    while ($numdigits < 4) {
+       $grepmod = "0" . $grepmod;
+       $numdigits++;
+    }
+    $caretmod = "^$grepmod";
+
+open (RFCINDEX, $indexpath);
+  # This will get us where we're going...
+  while (<RFCINDEX>) {
+	#next if (!/^$grepmod/);
+	next if (!/$caretmod/);
+	print "The Result:\n$_";
+	last; }
+  # Roll through the rest of the lines and print.
+  while (<RFCINDEX>) {
+	last if (/^$/);
+	print; }
+close (RFCINDEX);
+}
+
+sub mygrepstrings
+  {
+    my ($thing,$line);
+    my $found = 0;
+    my ($lookingfor) = @_;
+    print "The Result:\n";
+    open (RFCINDEX, $indexpath);
+        foreach $line (<RFCINDEX>) 
+	{
+	    if ($line !~ /^\s*$/){
+	        $thing .= $line; 
+	        if ($line =~ /$lookingfor/i) {
+		    $found = 1;  	     }
+	    }
+	   else { 
+		  if ($found) { 
+			#print $thing,"\n";
+			print $thing;
+	    		      }
+		$thing = ""; $found = 0;
+		}
+	}
+    close (RFCINDEX);
+  }
+
+sub browser
+{
+   #print "checking for a suitable browser\n";
+   my $possibility; 
+   foreach $viewer (@VIEWER)
+     {
+        foreach $possibility (@PATH)
+          {
+           if (-x "$possibility/" . "$viewer")
+            { $viewer = "$possibility/"."$viewer"; return $viewer}
+          }
+     }
+}
+
+sub numlines
+{
+ my $lines=0;
+  open (COUNTFILE, "$_[0]");
+   my $i=0;
+   foreach $lines (<COUNTFILE>)
+    { $i++; }
+  close (COUNTFILE);
+ return $i;
+}
+
+my
+($looking_for,$start,$end,$search_proto,$url,$search_port,$line,$name,$port,$proto,$descript,$last_line_match,$number,$keyword,$desc,$references,$local_refs,$send_of_refs,$local_ref,$found,$end_of_refs);
+my @refs;
+my @local_refs;
+
+sub rfc1700                  #THANKS to Derek J. Balling for this!!!!
+{
+
+    $looking_for = shift @_;
+
+    if ($looking_for eq "ip")
+    {
+    $start = "Assigned Internet Protocol Numbers";
+    $end = "REFERENCES";
+    ($search_proto) = @_;
+    #$url = "ftp://ftp.isi.edu/in-notes/iana/assignments/protocol-numbers";
+    $url = "http://www.iana.org/assignments/protocol-numbers";
+   print "Making connection to server.... \n$url\n";
+    }
+    elsif ($looking_for eq "port")
+    {
+    $start = "Port Assignments:";
+    $end = "REFERENCES";
+    ($search_port,$search_proto) = @_;
+    #$url = "ftp://ftp.isi.edu/in-notes/iana/assignments/port-numbers";
+    $url = "http://www.iana.org/assignments/port-numbers";
+   print "Making connection to server.... \n$url\n";
+    }
+    else
+    {
+    print "Usage: rfc -p port <port num> [protocol]\n";
+    print "       rfc -p ip <proto num>\n";
+    exit 1;
+    }
+
+    open RFC, "$viewer -dump $url |";
+
+    while (<RFC>)
+    {
+    last if /^$start/;
+    }
+
+    while (<RFC>)
+    {
+    last if /$end/;
+
+    $line = $_;
+
+    if ($looking_for eq "port")
+    {
+        ($name,$port,$proto,$descript) = $line =~ /^(.*)\s+(\d+)\/(\w+)\s+(.*)/;
+        if (
+        ( ($port =~ /^\d+$/) and ($port eq $search_port) )
+        or
+        ( ($search_port =~ /\D/) and
+          ( ($name =~ /$search_port/i) or ($descript =~ /$search_port/i) )
+          )
+        )
+        {
+        $last_line_match = 1;
+        if ( (!defined $search_proto) or ($proto eq $search_proto) )
+        {
+            print $line;
+        }
+        }
+        else
+        {
+        if ( ($line =~ /^\#/) and ($last_line_match) )
+        {
+            print $line;
+        }
+        else
+        {
+            $last_line_match = 0;
+        }
+        }
+    }
+
+    if ($looking_for eq "ip")
+    {
+        ($number,$keyword,$desc,$references) = $line =~ /^\s*([\d\-]+)\s+([A-Z\-\d]+)\s+(.*?)\s*\[(.*)\]/;
+
+        if ( ($search_proto =~ /^\d+$/) and ($search_proto == $number) )
+        {
+        print $line;
+        @local_refs = split /\,/, $references;
+        push @refs, @local_refs;
+        }
+        elsif ( ($search_proto =~ /\D/) and
+            ( ($keyword =~ /$search_proto/i) or ($desc =~ /$search_proto/i) )
+            )
+        {
+        print $line;
+        @local_refs = split /\,/, $references;
+        push @refs, @local_refs;
+        }
+    }
+
+    }
+
+    if ($looking_for eq 'ip')
+    {
+    print "\n";
+    # Find IP refs
+
+    $end_of_refs = "URL =";
+
+    while (<RFC>)
+    {
+        last if /$end_of_refs/;
+
+        $line = $_;
+        ($local_ref) = /^\[(.*?)\]/;
+        if ($local_ref)
+        {
+        if (grep /^$local_ref$/, @refs)
+        {
+            $found = 1;
+            print $line;
+        }
+        else
+        {
+            $found = 0;
+        }
+        }
+        else
+        {
+        if ( ($found) and (/\w/))
+        {
+            print;
+        }
+        else
+        {
+            $found = 0;
+        }
+        }
+    }
+    }
+
+    close RFC;
+
+}
+
+sub help 
+{
+
+ print  "rfc v3.2.3: perl util to search the rfc-index and disply the pages with \$viewer\n"
+    .   "usage:  rfc \#     search rfc-index for specified RFC and list topic\n"
+        .       "\trfc -d \# \/path\/ (optional) dumps plain text RFC. default is current dir\n"
+        .       "\trfc -h    displays this stuff\n"
+        .       "\trfc -i    updates the $indexpath via \$viewer\n"
+        .       "\trfc -k    keyword; same as -s\n"
+        .       "\trfc -l \#  spawns \$viewer to the specified RFC\n"
+        .       "\trfc -m \# user\@remote.net [opt subject]; emails the RFC to given address\n"
+        .       "\trfc -n \#\/daemon local search for non-standard service/port nums\n\t\t  (BO, Netbus, etc)\n"
+        .       "\trfc -o \#  Dumps RFC to STDOUT\n"
+        .       "\trfc -p    Connect to INI's assigned numbers for proto nums or \n\t\t  services/ports association\n"
+        .       "\trfc -r    go wild with your own regexp on rfc-index\n"
+        .       "\trfc -s \"string\" Search the index for specific string\n"
+        .       "\trfc -u \#  sets the base URL to the number listed with -w\n"
+        .       "\trfc -w    lists the available webservers to display\n"
+        .       "baseURL=$rfcbaseurl\n"
+    .   "comments\/bugfixes mailto: rfc\@blinky-lights.org\n\n";
+   exit;
+
+}
+

@@ -1,0 +1,4 @@
+#!/bin/sh
+/etc/skynet-client/send-message.pl $@
+/usr/bin/logger -t "nagios" "notify-by-skynet -> $@"
+

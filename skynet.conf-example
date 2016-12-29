@@ -1,0 +1,14 @@
+#!/usr/bin/perl
+
+$server = "";
+$port = "5222";
+$username = "";
+$password = '';
+$resource = "";
+$alias = $username;
+
+@forums = qw( );
+@custom_includes = qw( );
+
+1;
+
